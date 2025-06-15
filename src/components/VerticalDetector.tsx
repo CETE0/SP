@@ -9,6 +9,8 @@ const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
 const SHOW_DEBUG = false;
 const UPDATE_THROTTLE_MS = 100;
+const KEY_BOTTOM_Y = 70; // px offset when phone is vertical
+const KEY_TOP_Y = 32;   // px offset when phone is fully horizontal (inside slot)
 
 function smoothBeta(values: number[], windowSize: number = SMOOTHING_WINDOW): number {
   if (values.length === 0) return 0;
@@ -92,8 +94,8 @@ export const VerticalDetector = () => {
   const [isArmedPulsing, setIsArmedPulsing] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
-  // Add visual position state for smoother movement - start aligned with keyhole slot
-  const [visualPosition, setVisualPosition] = useState({ x: 0, y: 76 });
+  // Add visual position state for smoother movement
+  const [visualPosition, setVisualPosition] = useState({ x: 0, y: 50 });
   const lastVisualUpdate = useRef(0);
   const visualBetaHistory = useRef<number[]>([]);
   const visualGammaHistory = useRef<number[]>([]);
@@ -194,7 +196,7 @@ export const VerticalDetector = () => {
     const smoothedBeta = smoothBeta(betaHistory.current);
     const now = Date.now();
     
-    const deltaBeta = baseBeta !== null ? smoothedBeta - baseBeta : 0;
+    const deltaBeta = baseBeta !== null ? smoothedBeta - baseBeta : smoothedBeta;
 
     // Only update debug in development and throttle it
     if (SHOW_DEBUG) {
@@ -212,42 +214,23 @@ export const VerticalDetector = () => {
       }, null, 2));
     }
     
-    // ALWAYS update visual position for smooth movement
+    // Throttled visual position updates for smoother movement
     if (now - lastVisualUpdate.current > UPDATE_THROTTLE_MS) {
       const smoothedVisualBeta = smoothMovement(visualBetaHistory.current);
       const smoothedVisualGamma = smoothMovement(visualGammaHistory.current);
       
-      let horizontalOffset = 0;
-      let verticalOffset = 0;
-      
-      if (baseBeta !== null) {
-        // Use relative positioning based on baseline
-        const visualDeltaBeta = smoothedVisualBeta - baseBeta;
-        
-        // Progressive movement based on how close to horizontal
-        const progressToHorizontal = Math.max(0, Math.min(1, 
-          (Math.abs(baseBeta) - Math.abs(visualDeltaBeta)) / Math.abs(baseBeta)
-        ));
-        
-                 // Smooth transition: start at bottom (aligned with keyhole slot), move up as approaching horizontal
-         const maxUpwardMovement = 91; // Distance from bottom to keyhole slot (76px to -15px)
-         verticalOffset = 76 - (progressToHorizontal * maxUpwardMovement); // Start at 76px below, move up
-        
-        // Horizontal movement based on gamma (left/right tilt)
-        const gammaNormalized = Math.max(-1, Math.min(1, smoothedVisualGamma / 45));
-        horizontalOffset = gammaNormalized * 30; // Reduced horizontal movement
-        
-        // When very close to horizontal, snap to center for clean insertion
-        if (Math.abs(visualDeltaBeta) <= HORIZONTAL_ARMED && Math.abs(smoothedVisualGamma) <= HORIZONTAL_ARMED) {
-          horizontalOffset = 0;
-          verticalOffset = -15; // Final position inside keyhole
-        }
-             } else {
-         // Before baseline is established, show key at bottom aligned with keyhole
-         verticalOffset = 76; // Bottom position, aligned with keyhole slot (15px keyhole offset + 46px slot top + 15px spacing)
-         horizontalOffset = 0;
-       }
-      
+      // Calculate vertical progress based on deltaBeta (relative to baseline)
+      const effectiveBase = baseBeta !== null ? baseBeta : Math.abs(smoothedVisualBeta) || 45;
+      const progressRaw = effectiveBase !== 0 ? (effectiveBase - (baseBeta !== null ? smoothedVisualBeta : Math.abs(smoothedVisualBeta))) / effectiveBase : 0;
+      const verticalProgress = clamp(progressRaw, 0, 1); // 0 (bottom) -> 1 (top)
+
+      // Map progress to Y offset
+      const verticalOffset = KEY_BOTTOM_Y - verticalProgress * (KEY_BOTTOM_Y - KEY_TOP_Y);
+
+      // Horizontal offset still based on gamma
+      const gammaNormalized = clamp(smoothedVisualGamma / 45, -1, 1);
+      const horizontalOffset = gammaNormalized * 60;
+
       setVisualPosition({ x: horizontalOffset, y: verticalOffset });
       lastVisualUpdate.current = now;
     }
@@ -544,8 +527,8 @@ export const VerticalDetector = () => {
             </div>
           </div>
           
-          {/* Moving key with SMOOTH MOVEMENT - ALWAYS VISIBLE */}
-          {isClient && (
+          {/* Moving key with SMOOTH MOVEMENT */}
+          {isClient && baseBeta !== null && (
             <div 
               className="absolute transition-all duration-200 ease-out"
               style={{
@@ -559,7 +542,6 @@ export const VerticalDetector = () => {
                 border: `2px solid ${isArmed ? '#00ff64' : colors.primary}`,
                 boxShadow: isArmed ? `0 0 15px #00ff64` : `0 0 12px ${colors.primary}`,
                 zIndex: isArmed ? 15 : 5,
-                opacity: baseBeta !== null ? 1 : 0.7, // Slightly transparent before baseline
               }}
             />
           )}
@@ -685,3 +667,5 @@ export const VerticalDetector = () => {
     </motion.div>
   );
 };
+
+const clamp = (val: number, min: number, max: number) => Math.max(min, Math.min(max, val));
