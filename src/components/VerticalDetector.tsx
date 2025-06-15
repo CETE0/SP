@@ -9,7 +9,7 @@ const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
 const SHOW_DEBUG = false;
 const UPDATE_THROTTLE_MS = 50;
-const KEY_BOTTOM_Y = 60; // px offset when phone is vertical
+const KEY_BOTTOM_Y = 90; // px offset when phone is vertical
 const KEY_TOP_Y = 32;   // px offset when phone is fully horizontal (inside slot)
 
 function smoothBeta(values: number[], windowSize: number = SMOOTHING_WINDOW): number {
