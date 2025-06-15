@@ -4,8 +4,8 @@ import { useSocket } from '@/hooks/useSocket';
 
 const RATE_LIMIT_MS = 3000;
 const SMOOTHING_WINDOW = 10;
-const HORIZONTAL_ARMED = 5;  // degrees
-const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
+const HORIZONTAL_ARMED = 3;  // degrees - More strict to prevent sticking
+const HORIZONTAL_UNARMED = 6; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
 const SHOW_DEBUG = false;
 const UPDATE_THROTTLE_MS = 100;
@@ -97,6 +97,12 @@ export const VerticalDetector = () => {
   const lastVisualUpdate = useRef(0);
   const visualBetaHistory = useRef<number[]>([]);
   const visualGammaHistory = useRef<number[]>([]);
+  
+  // Initialize visual position to ensure key is always visible
+  useEffect(() => {
+    // Set initial position when component mounts
+    setVisualPosition({ x: 0, y: 50 });
+  }, []);
 
   // Destructure only the values we actually use from the socket hook
   const {
@@ -213,7 +219,7 @@ export const VerticalDetector = () => {
     }
     
     // Throttled visual position updates for smoother movement
-    if (now - lastVisualUpdate.current > UPDATE_THROTTLE_MS && baseBeta !== null) {
+    if (now - lastVisualUpdate.current > UPDATE_THROTTLE_MS) {
       const smoothedVisualBeta = smoothMovement(visualBetaHistory.current);
       const smoothedVisualGamma = smoothMovement(visualGammaHistory.current);
       
@@ -221,13 +227,21 @@ export const VerticalDetector = () => {
       let horizontalOffset = 0;
       let verticalOffset = 0;
       
-      if (Math.abs(deltaBeta) <= HORIZONTAL_ARMED && Math.abs(gamma) <= HORIZONTAL_ARMED) {
+      // Use consistent deltaBeta calculation for both ARMED detection and visual positioning
+      const visualDeltaBeta = baseBeta !== null ? smoothedVisualBeta - baseBeta : 0;
+      
+      // Only snap to center when ACTUALLY armed (not just approaching threshold)
+      if (isArmed && Math.abs(visualDeltaBeta) <= HORIZONTAL_ARMED && Math.abs(smoothedVisualGamma) <= HORIZONTAL_ARMED) {
         // ARMED state - move to center (into keyhole)
         horizontalOffset = 0;
         verticalOffset = -15; // Move up into the keyhole slot
       } else {
-        // Calculate smooth offsets
-        const betaNormalized = Math.max(-1, Math.min(1, smoothedVisualBeta / 45));
+        // Calculate smooth offsets based on relative positioning (deltaBeta)
+        // This prevents the "sticking" issue by using consistent relative positioning
+        const betaNormalized = baseBeta !== null 
+          ? Math.max(-1, Math.min(1, visualDeltaBeta / 45))
+          : Math.max(-1, Math.min(1, smoothedVisualBeta / 45)); // Fallback for initial state
+        
         verticalOffset = betaNormalized * maxMovement;
         
         const gammaNormalized = Math.max(-1, Math.min(1, smoothedVisualGamma / 45));
@@ -530,8 +544,8 @@ export const VerticalDetector = () => {
             </div>
           </div>
           
-          {/* Moving key with SMOOTH MOVEMENT */}
-          {isClient && baseBeta !== null && (
+          {/* Moving key with SMOOTH MOVEMENT - Always visible */}
+          {isClient && (
             <div 
               className="absolute transition-all duration-200 ease-out"
               style={{
