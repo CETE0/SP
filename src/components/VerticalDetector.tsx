@@ -4,8 +4,8 @@ import { useSocket } from '@/hooks/useSocket';
 
 const RATE_LIMIT_MS = 3000;
 const SMOOTHING_WINDOW = 8;
-const HORIZONTAL_ARMED = 5;  // degrees
-const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
+const HORIZONTAL_ARMED = 7;  // degrees
+const HORIZONTAL_UNARMED = 10; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
 const SHOW_DEBUG = false;
 const UPDATE_THROTTLE_MS = 50;
@@ -237,8 +237,8 @@ export const VerticalDetector = () => {
     
     // ARMED state logic (unchanged)
     const isCurrentlyHorizontal = isArmedRef.current
-      ? isHorizontal(HORIZONTAL_UNARMED, deltaBeta, gamma)
-      : isHorizontal(HORIZONTAL_ARMED, deltaBeta, gamma);
+      ? isHorizontal(HORIZONTAL_UNARMED, smoothedBeta, gamma)
+      : isHorizontal(HORIZONTAL_ARMED, smoothedBeta, gamma);
     
     if (isCurrentlyHorizontal && !isArmedRef.current && now - lastTrigger.current > RATE_LIMIT_MS) {
       // Transitioning from UNARMED to ARMED (horizontal)
@@ -337,8 +337,14 @@ export const VerticalDetector = () => {
   });
 
   // --------------- helper isHorizontal ----------------
-  const isHorizontal = (threshold:number, deltaB:number, gamma:number) =>
-    Math.abs(deltaB) <= threshold && Math.abs(gamma) <= threshold;
+  const betaWithin = (threshold:number, beta:number) => {
+    const abs = Math.abs(beta);
+    // also accept values around 180/-180 so the phone can be flipped
+    return abs <= threshold || Math.abs(abs - 180) <= threshold;
+  };
+
+  const isHorizontal = (threshold:number, beta:number, gamma:number) =>
+    betaWithin(threshold, beta) && Math.abs(gamma) <= threshold;
 
   // Calculate enhanced colors based on current orientation
   const colors = (() => {
@@ -534,8 +540,8 @@ export const VerticalDetector = () => {
               style={{
                 top: '50%',
                 left: '50%',
-                // keep the element centred, rotation comes first so spring only affects position
-                transform: 'translate(-50%, -50%) rotate(180deg)',
+                // keep the element centred; rotated back to 0° so the key head points downward
+                transform: 'translate(-50%, -50%) rotate(0deg)',
                 width: '14px',
                 height: '26px',
                 borderRadius: '7px 7px 3px 3px',
