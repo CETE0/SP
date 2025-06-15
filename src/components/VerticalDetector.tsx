@@ -76,13 +76,13 @@ export const VerticalDetector = () => {
   const [isArmedPulsing, setIsArmedPulsing] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
-  const { socket, emitTrigger, emitArmed, globalCounter, erectionCounter, userCount, isConnected, isBanned, banMessage, lastAction } = useSocket();
+  const { emitTrigger, ... } = useSocket(); // socket not used
   
   // Helper function to add debug logs
-  const addDebugLog = (message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setDebugLogs(prev => [...prev.slice(-4), `${timestamp}: ${message}`]); // Keep only last 5 logs
-  };
+  const addDebugLog = useCallback(
+    (msg: string) => setDebugLogs(prev => [...prev.slice(-4), msg]),
+    []
+  );
 
   // Simple audio play function (replicating tick.mp3 logic)
   const playMorseAudio = () => {
