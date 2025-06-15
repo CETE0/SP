@@ -3,16 +3,29 @@ import { motion } from 'framer-motion';
 import { useSocket } from '@/hooks/useSocket';
 
 const RATE_LIMIT_MS = 3000;
-const SMOOTHING_WINDOW = 5;
+const SMOOTHING_WINDOW = 10;
 const HORIZONTAL_ARMED = 5;  // degrees
 const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
 const SHOW_DEBUG = false;
+const UPDATE_THROTTLE_MS = 100;
 
 function smoothBeta(values: number[], windowSize: number = SMOOTHING_WINDOW): number {
   if (values.length === 0) return 0;
   const window = values.slice(-windowSize);
   return window.reduce((sum, val) => sum + val, 0) / window.length;
+}
+
+// Enhanced smoothing for visual movement
+function smoothMovement(values: number[], windowSize: number = 8): number {
+  if (values.length === 0) return 0;
+  const window = values.slice(-windowSize);
+  // Apply exponential smoothing for even smoother movement
+  let smoothed = window[0];
+  for (let i = 1; i < window.length; i++) {
+    smoothed = smoothed * 0.7 + window[i] * 0.3;
+  }
+  return smoothed;
 }
 
 // Enhanced color system for orientation guidance
@@ -79,6 +92,12 @@ export const VerticalDetector = () => {
   const [isArmedPulsing, setIsArmedPulsing] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
+  // Add visual position state for smoother movement
+  const [visualPosition, setVisualPosition] = useState({ x: 0, y: 50 });
+  const lastVisualUpdate = useRef(0);
+  const visualBetaHistory = useRef<number[]>([]);
+  const visualGammaHistory = useRef<number[]>([]);
+
   // Destructure only the values we actually use from the socket hook
   const {
     emitTrigger,
@@ -128,7 +147,6 @@ export const VerticalDetector = () => {
     }
   }, [isConnected]);
   const betaHistory = useRef<number[]>([]);
-  const gammaHistory = useRef<number[]>([]);
   const lastTrigger = useRef(0);
   const currentOrientation = useRef({ alpha: 0, beta: 0, gamma: 0 });
   const isArmedRef = useRef(false);
@@ -161,20 +179,24 @@ export const VerticalDetector = () => {
     
     currentOrientation.current = { alpha, beta, gamma };
     betaHistory.current.push(beta);
-    gammaHistory.current.push(gamma);
     if (betaHistory.current.length > SMOOTHING_WINDOW * 2) {
       betaHistory.current.shift();
     }
-    if (gammaHistory.current.length > SMOOTHING_WINDOW * 2) {
-      gammaHistory.current.shift();
+    
+    // Add to visual smoothing arrays
+    visualBetaHistory.current.push(beta);
+    visualGammaHistory.current.push(gamma);
+    if (visualBetaHistory.current.length > 15) {
+      visualBetaHistory.current.shift();
+      visualGammaHistory.current.shift();
     }
     
     const smoothedBeta = smoothBeta(betaHistory.current);
-    const smoothedGamma = smoothBeta(gammaHistory.current);
-    
     const now = Date.now();
+    
     const deltaBeta = baseBeta !== null ? smoothedBeta - baseBeta : smoothedBeta;
 
+    // Only update debug in development and throttle it
     if (SHOW_DEBUG) {
       setDebug(JSON.stringify({
         beta: beta.toFixed(2),
@@ -190,49 +212,60 @@ export const VerticalDetector = () => {
       }, null, 2));
     }
     
-    // ARMED state: phone is horizontal relative to baseline
+    // Throttled visual position updates for smoother movement
+    if (now - lastVisualUpdate.current > UPDATE_THROTTLE_MS && baseBeta !== null) {
+      const smoothedVisualBeta = smoothMovement(visualBetaHistory.current);
+      const smoothedVisualGamma = smoothMovement(visualGammaHistory.current);
+      
+      const maxMovement = 60;
+      let horizontalOffset = 0;
+      let verticalOffset = 0;
+      
+      if (Math.abs(deltaBeta) <= HORIZONTAL_ARMED && Math.abs(gamma) <= HORIZONTAL_ARMED) {
+        // ARMED state - move to center (into keyhole)
+        horizontalOffset = 0;
+        verticalOffset = -15; // Move up into the keyhole slot
+      } else {
+        // Calculate smooth offsets
+        const betaNormalized = Math.max(-1, Math.min(1, smoothedVisualBeta / 45));
+        verticalOffset = betaNormalized * maxMovement;
+        
+        const gammaNormalized = Math.max(-1, Math.min(1, smoothedVisualGamma / 45));
+        horizontalOffset = gammaNormalized * maxMovement;
+      }
+      
+      setVisualPosition({ x: horizontalOffset, y: 50 + verticalOffset });
+      lastVisualUpdate.current = now;
+    }
+    
+    // ARMED state logic (unchanged)
     const isCurrentlyHorizontal = isArmedRef.current
-      ? isHorizontal(HORIZONTAL_UNARMED, deltaBeta, smoothedGamma)
-      : isHorizontal(HORIZONTAL_ARMED, deltaBeta, smoothedGamma);
+      ? isHorizontal(HORIZONTAL_UNARMED, deltaBeta, gamma)
+      : isHorizontal(HORIZONTAL_ARMED, deltaBeta, gamma);
     
     if (isCurrentlyHorizontal && !isArmedRef.current && now - lastTrigger.current > RATE_LIMIT_MS) {
       // Transitioning from UNARMED to ARMED (horizontal)
       isArmedRef.current = true;
       setIsArmed(true);
-      setArmedCounter(prev => prev + 1); // Increment counter
-      emitArmed(); // Emit to server for global counter
+      setArmedCounter(prev => prev + 1);
+      emitArmed();
       console.log('Triggering client-side morse audio...');
-      addDebugLog('TRIGGER: Client-side morse audio');
+      if (SHOW_DEBUG) addDebugLog('TRIGGER: Client-side morse audio');
       
-      // Client-side trigger - play morse.mp3 directly
-      addDebugLog('AUDIO: Triggering morse.mp3');
+      if (SHOW_DEBUG) addDebugLog('AUDIO: Triggering morse.mp3');
       playMorseAudio();
-      
-      // Still emit to server for counters (if connected)
-      emitTrigger();
       lastTrigger.current = now;
       
-      // Visual feedback - brief pulsating effect
       setIsArmedPulsing(true);
-      setTimeout(() => {
-        setIsArmedPulsing(false);
-      }, 1000); // Pulse for 1 second
+      setTimeout(() => setIsArmedPulsing(false), 1000);
       
-      // No audio feedback when armed - only trigger outputs
     } else if (!isCurrentlyHorizontal && isArmedRef.current) {
-      // Transitioning from ARMED to UNARMED (not horizontal in both axes)
+      // Transitioning from ARMED to UNARMED (not horizontal)
       isArmedRef.current = false;
       setIsArmed(false);
-
-      // Stop any playing audio when leaving ARMED state
       stopMorseAudio();
-      
-      // No audio feedback when unarmed
     }
-    
-    // Remove all the old motion detection logic since we only care about ARMED/UNARMED states
-    
-  }, [emitTrigger, emitArmed, baseBeta, playMorseAudio, stopMorseAudio]);
+  }, [baseBeta, isArmed, emitArmed, playMorseAudio, stopMorseAudio, addDebugLog]);
 
   // Removed handleMotion since we only need orientation data
 
@@ -410,12 +443,17 @@ export const VerticalDetector = () => {
       {/* Circular Motion Indicator - Only 2 circles */}
       <div className="flex items-center justify-center">
         <div className="relative w-40 h-40">
-          {/* Traditional keyhole shape */}
+          {/* Traditional keyhole shape - FIXED CENTERING */}
           <div 
-            className={`absolute inset-0 flex items-center justify-center transition-all duration-300 z-10 ${
+            className={`absolute transition-all duration-300 z-10 ${
               !isArmed ? 'animate-pulse' : ''
             }`}
-            style={{ animationDuration: !isArmed ? '1s' : undefined }}
+            style={{
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, calc(-50% + 15px))', // Properly centered
+              animationDuration: !isArmed ? '1s' : undefined,
+            }}
           >
             {/* Solid circular part - the crescent shape */}
             <div 
@@ -427,7 +465,7 @@ export const VerticalDetector = () => {
                 border: `4px solid ${isArmed ? '#00ff64' : colors.primary}`,
                 boxShadow: isArmed ? '0 0 20px #00ff64' : `0 0 15px ${colors.primary}`,
                 position: 'relative',
-                opacity: 0.8, // More solid than before
+                opacity: 0.8,
               }}
             >
               {/* White blinking overlay for circular part */}
@@ -453,18 +491,18 @@ export const VerticalDetector = () => {
             {/* Rectangular slot part of keyhole */}
             <div 
               style={{
-                width: '18px', // Match the cut-out width
+                width: '18px',
                 height: '30px',
                 backgroundColor: 'transparent',
                 borderLeft: `4px solid ${isArmed ? '#00ff64' : colors.primary}`,
                 borderRight: `4px solid ${isArmed ? '#00ff64' : colors.primary}`,
                 borderBottom: `4px solid ${isArmed ? '#00ff64' : colors.primary}`,
-                borderTop: 'none', // Connect to circle
-                borderRadius: '0 0 9px 9px', // Match the cut-out radius
+                borderTop: 'none',
+                borderRadius: '0 0 9px 9px',
                 boxShadow: isArmed ? '0 0 20px #00ff64' : `0 0 15px ${colors.primary}`,
                 position: 'absolute',
                 left: '50%',
-                top: '46px', // Position below the circle
+                top: '46px',
                 transform: 'translateX(-50%)',
               }}
             >
@@ -475,13 +513,13 @@ export const VerticalDetector = () => {
                   style={{
                     top: '-4px',
                     left: '-4px',
-                    width: '18px', // Match the slot width
+                    width: '18px',
                     height: '30px',
                     borderLeft: '4px solid white',
                     borderRight: '4px solid white',
                     borderBottom: '4px solid white',
                     borderTop: 'none',
-                    borderRadius: '0 0 9px 9px', // Match the slot radius
+                    borderRadius: '0 0 9px 9px',
                     opacity: 0.3,
                     animationDuration: '0.8s',
                     animationDirection: 'alternate',
@@ -492,79 +530,51 @@ export const VerticalDetector = () => {
             </div>
           </div>
           
-          {/* Moving circle based on all gyro parameters */}
-          {isClient && betaHistory.current.length > 0 && baseBeta !== null && (
-            (() => {
-              const currentBeta = smoothBeta(betaHistory.current);
-              const currentGamma = smoothBeta(gammaHistory.current);
-              
-              // Calculate movement based on all gyro parameters
-              const maxMovement = 60; // Maximum pixels the circle can move from center
-              
-              // Calculate offsets based on device orientation
-              let horizontalOffset = 0;
-              let verticalOffset = 0;
-              
-              if (Math.abs(currentBeta - (baseBeta ?? 0)) <= HORIZONTAL_ARMED && Math.abs(currentGamma) <= HORIZONTAL_ARMED) {
-                // ARMED state - circle moves to center (overlapping with center circle)
-                horizontalOffset = 0;
-                verticalOffset = 0;
-              } else {
-                // Calculate offsets based on tilt
-                // Beta controls vertical movement (forward/backward tilt)
-                const betaNormalized = Math.max(-1, Math.min(1, currentBeta / 45));
-                verticalOffset = betaNormalized * maxMovement;
-                
-                // Gamma controls horizontal movement (left/right tilt)
-                const gammaNormalized = Math.max(-1, Math.min(1, currentGamma / 45));
-                horizontalOffset = gammaNormalized * maxMovement;
-              }
-              
-              // Start position: below the keyhole, ready to slide up into the slot
-              const baseVerticalOffset = 50; // Start 50px below center to be below the keyhole
-              
-              return (
-                <div 
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-300"
-                  style={{
-                    transform: `translate(calc(-50% + ${horizontalOffset}px), calc(-50% + ${baseVerticalOffset + verticalOffset}px)) rotate(180deg)`,
-                    width: '14px', // Slightly larger to fit perfectly in the 18px slot
-                    height: '26px', // Slightly taller for better fit
-                    borderRadius: '7px 7px 3px 3px', // Proportionally adjusted radius
-                    backgroundColor: isArmed ? '#00ff64' : colors.primary,
-                    border: `2px solid ${isArmed ? '#00ff64' : colors.primary}`,
-                    boxShadow: isArmed ? `0 0 15px ${isArmed ? '#00ff64' : colors.primary}` : `0 0 12px ${colors.primary}`,
-                    zIndex: isArmed ? 15 : 5, // Higher z-index when armed to show it's "inserted"
-                  }}
-                />
-              );
-            })()
+          {/* Moving key with SMOOTH MOVEMENT */}
+          {isClient && baseBeta !== null && (
+            <div 
+              className="absolute transition-all duration-200 ease-out"
+              style={{
+                top: '50%',
+                left: '50%',
+                transform: `translate(calc(-50% + ${visualPosition.x}px), calc(-50% + ${visualPosition.y}px)) rotate(180deg)`,
+                width: '14px',
+                height: '26px',
+                borderRadius: '7px 7px 3px 3px',
+                backgroundColor: isArmed ? '#00ff64' : colors.primary,
+                border: `2px solid ${isArmed ? '#00ff64' : colors.primary}`,
+                boxShadow: isArmed ? `0 0 15px #00ff64` : `0 0 12px ${colors.primary}`,
+                zIndex: isArmed ? 15 : 5,
+              }}
+            />
           )}
         </div>
       </div>
 
-      {/* Debug overlay */}
+      {/* Hide all debug UI elements */}
       {SHOW_DEBUG && debug && (
         <div style={{
           position: 'absolute', top: 0, left: 0, color: 'lime', background: 'rgba(0,0,0,0.7)', zIndex: 9999, fontSize: 12, padding: 8, maxWidth: 400, whiteSpace: 'pre-wrap', wordBreak: 'break-all', pointerEvents: 'none'
         }}>{debug}</div>
       )}
       
-      {/* Status indicator */}
-      <div style={{
-        position: 'absolute', top: 0, right: 0, color: 'cyan', background: 'rgba(0,0,0,0.7)', zIndex: 9999, fontSize: 14, padding: 8, pointerEvents: 'none'
-      }}>
-        STATE: {isArmed ? 'ARMED' : 'UNARMED'} (isArmed={isArmed.toString()})<br/>
-        Distance from Horizontal: {isClient && betaHistory.current.length > 0 && baseBeta !== null ? Math.abs(betaHistory.current[betaHistory.current.length - 1] - baseBeta).toFixed(1) : '0'}°<br/>
-        Gamma: {isClient && currentOrientation.current ? currentOrientation.current.gamma.toFixed(1) : '0'}°<br/>
-        Local Armed: {armedCounter}<br/>
-        Global Armed: {globalCounter}<br/>
-        Global Erections: {erectionCounter}<br/>
-        Users: {userCount}<br/>
-        Connected: {isConnected ? '✓' : '✗'}
-      </div>
+      {/* Hide status indicator */}
+      {SHOW_DEBUG && (
+        <div style={{
+          position: 'absolute', top: 0, right: 0, color: 'cyan', background: 'rgba(0,0,0,0.7)', zIndex: 9999, fontSize: 14, padding: 8, pointerEvents: 'none'
+        }}>
+          STATE: {isArmed ? 'ARMED' : 'UNARMED'} (isArmed={isArmed.toString()})<br/>
+          Distance from Horizontal: {isClient && betaHistory.current.length > 0 && baseBeta !== null ? Math.abs(betaHistory.current[betaHistory.current.length - 1] - baseBeta).toFixed(1) : '0'}°<br/>
+          Gamma: {isClient && currentOrientation.current ? currentOrientation.current.gamma.toFixed(1) : '0'}°<br/>
+          Local Armed: {armedCounter}<br/>
+          Global Armed: {globalCounter}<br/>
+          Global Erections: {erectionCounter}<br/>
+          Users: {userCount}<br/>
+          Connected: {isConnected ? '✓' : '✗'}
+        </div>
+      )}
 
-      {/* Debug logs display */}
+      {/* Hide debug logs */}
       {SHOW_DEBUG && debugLogs.length > 0 && (
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0, color: 'yellow', background: 'rgba(0,0,0,0.8)', zIndex: 9999, fontSize: 12, padding: 8, maxHeight: '200px', overflow: 'auto', pointerEvents: 'none'
@@ -576,30 +586,32 @@ export const VerticalDetector = () => {
         </div>
       )}
 
-      {/* Test audio button */}
-      <button
-        onClick={() => {
-          addDebugLog('🧪 TEST: Manual test');
-          playMorseAudio();
-        }}
-        style={{
-          position: 'absolute',
-          top: '50%',
-          right: '10px',
-          transform: 'translateY(-50%)',
-          padding: '10px',
-          backgroundColor: '#ff4040',
-          color: 'white',
-          border: 'none',
-          borderRadius: '5px',
-          fontSize: '12px',
-          cursor: 'pointer',
-          zIndex: 10000,
-          pointerEvents: 'auto'
-        }}
-      >
-        testear audio
-      </button>
+      {/* Hide test audio button */}
+      {SHOW_DEBUG && (
+        <button
+          onClick={() => {
+            addDebugLog('🧪 TEST: Manual test');
+            playMorseAudio();
+          }}
+          style={{
+            position: 'absolute',
+            top: '50%',
+            right: '10px',
+            transform: 'translateY(-50%)',
+            padding: '10px',
+            backgroundColor: '#ff4040',
+            color: 'white',
+            border: 'none',
+            borderRadius: '5px',
+            fontSize: '12px',
+            cursor: 'pointer',
+            zIndex: 10000,
+            pointerEvents: 'auto'
+          }}
+        >
+          testear audio
+        </button>
+      )}
 
       {/* Permission overlay */}
       {needsPermission && !permissionRequested && (
