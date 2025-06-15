@@ -76,13 +76,23 @@ export const VerticalDetector = () => {
   const [isArmedPulsing, setIsArmedPulsing] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
-  const { emitTrigger, ... } = useSocket(); // socket not used
+  // Destructure only the values we actually use from the socket hook
+  const {
+    emitTrigger,
+    emitArmed,
+    globalCounter,
+    erectionCounter,
+    userCount,
+    isConnected,
+    isBanned,
+    banMessage,
+    lastAction
+  } = useSocket();
   
-  // Helper function to add debug logs
-  const addDebugLog = useCallback(
-    (msg: string) => setDebugLogs(prev => [...prev.slice(-4), msg]),
-    []
-  );
+  // Helper function to add debug logs (memoised)
+  const addDebugLog = useCallback((msg: string) => {
+    setDebugLogs(prev => [...prev.slice(-4), msg]);
+  }, []);
 
   // Simple audio play function (replicating tick.mp3 logic)
   const playMorseAudio = () => {
@@ -206,7 +216,7 @@ export const VerticalDetector = () => {
     
     // Remove all the old motion detection logic since we only care about ARMED/UNARMED states
     
-  }, [emitTrigger, emitArmed, isIOS, baseBeta]);
+  }, [emitTrigger, emitArmed, baseBeta, playMorseAudio, stopMorseAudio]);
 
   // Removed handleMotion since we only need orientation data
 
