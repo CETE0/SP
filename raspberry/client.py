@@ -107,16 +107,42 @@ class EPaperDisplay:
         self.width, self.height = self.epd.height, self.epd.width  # note orientation swap
         self.font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
 
-    def display_number(self, number: int):
-        """Render the given integer centered on the screen."""
-        print(f"[EPD] Displaying number: {number}")
-        img = Image.new("1", (self.width, self.height), 255)  # 255 = white background
+    def _draw_tally_group(self, draw, x, y, h, w_gap, s_gap):
+        # draw 4 vertical lines
+        for i in range(4):
+            x_i = x + i * s_gap
+            draw.line((x_i, y, x_i, y + h), fill=0, width=2)
+        # diagonal slash
+        draw.line((x, y, x + 3 * s_gap, y + h), fill=0, width=2)
+        return x + 4 * s_gap + w_gap  # new x cursor
+
+    def _draw_single_stroke(self, draw, x, y, h, s_gap):
+        draw.line((x, y, x, y + h), fill=0, width=2)
+        return x + s_gap
+
+    def display_tally(self, n:int):
+        H_STROKE = 45
+        S_GAP    = 6    # stroke gap
+        G_GAP    = 10   # gap after a 5-tally group
+
+        img = Image.new("1", (self.width, self.height), 255)
         draw = ImageDraw.Draw(img)
-        text = str(number)
-        w, h = draw.textsize(text, font=self.font)
-        x = (self.width - w) // 2
-        y = (self.height - h) // 2
-        draw.text((x, y), text, font=self.font, fill=0)  # 0 = black
+
+        x, y = 0, 0
+        while n > 0 and y + H_STROKE < self.height:
+            # Decide whether to draw full group or remainder
+            if n >= 5:
+                next_x = self._draw_tally_group(draw, x, y, H_STROKE, G_GAP, S_GAP)
+                n -= 5
+            else:
+                next_x = self._draw_single_stroke(draw, x, y, H_STROKE, S_GAP)
+                n -= 1
+            # wrap to next row if needed
+            if next_x + 4 * S_GAP > self.width:
+                x, y = 0, y + H_STROKE + 6  # row gap
+            else:
+                x = next_x
+
         self.epd.display(self.epd.getbuffer(img))
 
     def clear(self):
@@ -242,7 +268,7 @@ def main():
             print("[Socket] Received invalid counter value:", count)
             return
         print(f"[Socket] Global counter updated: {count_int}")
-        display.display_number(count_int)
+        display.display_tally(count_int)
         if ENABLE_LED:
             blinker.update_number(count_int)
 
