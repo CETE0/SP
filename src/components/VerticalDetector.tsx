@@ -84,7 +84,7 @@ function getOrientationColors(currentBeta: number, baseBeta: number) {
 }
 
 export const VerticalDetector = () => {
-  const [needsPermission, setNeedsPermission] = useState(false);
+  const [needsPermission, setNeedsPermission] = useState(true);
   const [permissionRequested, setPermissionRequested] = useState(false);
   const [debug, setDebug] = useState<string>("");
   const [isArmed, setIsArmed] = useState(false);
@@ -280,6 +280,7 @@ export const VerticalDetector = () => {
       }
       setMotionGranted(true);
       setNeedsPermission(false);
+      setPermissionRequested(true);
     } catch {
       alert('Motion permission denied. Tilt interaction disabled.');
     }
@@ -287,16 +288,8 @@ export const VerticalDetector = () => {
 
   // Show permission overlay only until granted
   useEffect(() => {
-    if (
-      typeof DeviceOrientationEvent !== 'undefined' &&
-      // @ts-ignore
-      typeof DeviceOrientationEvent.requestPermission === 'function'
-    ) {
-      setNeedsPermission(!motionGranted);
-    } else {
-      // Android/ desktop – permission happens implicitly via user gesture
-      setMotionGranted(true);
-    }
+    // Hide the overlay once motion has been granted, otherwise keep it visible on all platforms.
+    setNeedsPermission(!motionGranted);
   }, [motionGranted]);
 
   // ------------ visibility handling --------------
@@ -654,7 +647,7 @@ export const VerticalDetector = () => {
               target.style.boxShadow = '0 0 30px rgba(255, 64, 64, 0.5)';
             }}
           >
-            Aceptas?
+            TAP
           </button>
         </div>
       )}
