@@ -544,7 +544,7 @@ export const VerticalDetector = () => {
                 transform: 'translate(-50%, -50%) rotate(0deg)',
                 width: '14px',
                 height: '26px',
-                borderRadius: '7px 7px 3px 3px',
+                borderRadius: '0px 0px 7px 7px',
                 backgroundColor: isArmed ? '#00ff64' : colors.primary,
                 border: `2px solid ${isArmed ? '#00ff64' : colors.primary}`,
                 boxShadow: isArmed ? `0 0 15px #00ff64` : `0 0 12px ${colors.primary}`,
