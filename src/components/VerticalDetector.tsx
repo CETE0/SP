@@ -164,20 +164,23 @@ export const VerticalDetector = () => {
     const smoothedBeta = smoothBeta(betaHistory.current);
     const now = Date.now();
     
+    const deltaBeta = baseBeta !== null ? smoothedBeta - baseBeta : smoothedBeta;
+
     setDebug(JSON.stringify({
       beta: beta.toFixed(2),
       gamma: gamma.toFixed(2),
       smoothedBeta: smoothedBeta.toFixed(2),
+      deltaBeta: deltaBeta.toFixed(2),
       isArmed,
       baseBeta: baseBeta?.toFixed(2),
-      distanceFromHorizontal: Math.abs(smoothedBeta).toFixed(2),
-      betaWithinThreshold: Math.abs(smoothedBeta) <= HORIZONTAL_THRESHOLD,
+      distanceFromHorizontal: Math.abs(deltaBeta).toFixed(2),
+      betaWithinThreshold: Math.abs(deltaBeta) <= HORIZONTAL_THRESHOLD,
       gammaWithinThreshold: Math.abs(gamma) <= HORIZONTAL_THRESHOLD,
-      isCurrentlyHorizontal: Math.abs(smoothedBeta) <= HORIZONTAL_THRESHOLD && Math.abs(gamma) <= HORIZONTAL_THRESHOLD
+      isCurrentlyHorizontal: Math.abs(deltaBeta) <= HORIZONTAL_THRESHOLD && Math.abs(gamma) <= HORIZONTAL_THRESHOLD
     }, null, 2));
     
-    // ARMED state: phone is horizontal (both beta and gamma ≈ 0, within HORIZONTAL_THRESHOLD)
-    const isCurrentlyHorizontal = Math.abs(smoothedBeta) <= HORIZONTAL_THRESHOLD && Math.abs(gamma) <= HORIZONTAL_THRESHOLD;
+    // ARMED state: phone is horizontal relative to baseline
+    const isCurrentlyHorizontal = Math.abs(deltaBeta) <= HORIZONTAL_THRESHOLD && Math.abs(gamma) <= HORIZONTAL_THRESHOLD;
     
     if (isCurrentlyHorizontal && !isArmedRef.current && now - lastTrigger.current > RATE_LIMIT_MS) {
       // Transitioning from UNARMED to ARMED (horizontal)
@@ -521,7 +524,7 @@ export const VerticalDetector = () => {
         position: 'absolute', top: 0, right: 0, color: 'cyan', background: 'rgba(0,0,0,0.7)', zIndex: 9999, fontSize: 14, padding: 8, pointerEvents: 'none'
       }}>
         STATE: {isArmed ? 'ARMED' : 'UNARMED'} (isArmed={isArmed.toString()})<br/>
-        Distance from Horizontal: {isClient && betaHistory.current.length > 0 ? Math.abs(betaHistory.current[betaHistory.current.length - 1]).toFixed(1) : '0'}°<br/>
+        Distance from Horizontal: {isClient && betaHistory.current.length > 0 && baseBeta !== null ? Math.abs(betaHistory.current[betaHistory.current.length - 1] - baseBeta).toFixed(1) : '0'}°<br/>
         Gamma: {isClient && currentOrientation.current ? currentOrientation.current.gamma.toFixed(1) : '0'}°<br/>
         Local Armed: {armedCounter}<br/>
         Global Armed: {globalCounter}<br/>
@@ -619,14 +622,8 @@ export const VerticalDetector = () => {
       {/* CSS for animations */}
       <style jsx>{`
         @keyframes phallicGrow {
-          from {
-            height: 0;
-            opacity: 0;
-          }
-          to {
-            height: 200px;
-            opacity: 1;
-          }
+          from { height: 0; opacity: 0; }
+          to   { height: 200px; opacity: 1; }
         }
       `}</style>
     </motion.div>
