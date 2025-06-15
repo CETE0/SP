@@ -4,8 +4,8 @@ import { useSocket } from '@/hooks/useSocket';
 
 const RATE_LIMIT_MS = 3000;
 const SMOOTHING_WINDOW = 10;
-const HORIZONTAL_ARMED = 3;  // degrees - More strict to prevent sticking
-const HORIZONTAL_UNARMED = 6; // degrees – hysteresis
+const HORIZONTAL_ARMED = 5;  // degrees
+const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
 const SHOW_DEBUG = false;
 const UPDATE_THROTTLE_MS = 100;
@@ -92,17 +92,11 @@ export const VerticalDetector = () => {
   const [isArmedPulsing, setIsArmedPulsing] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
-  // Add visual position state for smoother movement
+  // Add visual position state for smoother movement - start below keyhole
   const [visualPosition, setVisualPosition] = useState({ x: 0, y: 50 });
   const lastVisualUpdate = useRef(0);
   const visualBetaHistory = useRef<number[]>([]);
   const visualGammaHistory = useRef<number[]>([]);
-  
-  // Initialize visual position to ensure key is always visible
-  useEffect(() => {
-    // Set initial position when component mounts
-    setVisualPosition({ x: 0, y: 50 });
-  }, []);
 
   // Destructure only the values we actually use from the socket hook
   const {
@@ -227,28 +221,32 @@ export const VerticalDetector = () => {
       let horizontalOffset = 0;
       let verticalOffset = 0;
       
-      // Use consistent deltaBeta calculation for both ARMED detection and visual positioning
-      const visualDeltaBeta = baseBeta !== null ? smoothedVisualBeta - baseBeta : 0;
-      
-      // Only snap to center when ACTUALLY armed (not just approaching threshold)
-      if (isArmed && Math.abs(visualDeltaBeta) <= HORIZONTAL_ARMED && Math.abs(smoothedVisualGamma) <= HORIZONTAL_ARMED) {
-        // ARMED state - move to center (into keyhole)
+      // Use actual ARMED state instead of sensor thresholds to prevent premature sticking
+      if (isArmedRef.current) {
+        // ARMED state - move up into the keyhole slot
         horizontalOffset = 0;
         verticalOffset = -15; // Move up into the keyhole slot
       } else {
-        // Calculate smooth offsets based on relative positioning (deltaBeta)
-        // This prevents the "sticking" issue by using consistent relative positioning
-        const betaNormalized = baseBeta !== null 
-          ? Math.max(-1, Math.min(1, visualDeltaBeta / 45))
-          : Math.max(-1, Math.min(1, smoothedVisualBeta / 45)); // Fallback for initial state
+        // UNARMED state - calculate position based on tilt, but always keep key visible
+        if (baseBeta !== null && visualBetaHistory.current.length > 0) {
+          // Use relative positioning from baseline
+          const relativeBeta = smoothedVisualBeta - baseBeta;
+          const betaNormalized = Math.max(-1, Math.min(1, relativeBeta / 45));
+          verticalOffset = betaNormalized * maxMovement;
+        } else {
+          // Default position when no baseline yet - stay at default position
+          verticalOffset = 0;
+        }
         
-        verticalOffset = betaNormalized * maxMovement;
-        
-        const gammaNormalized = Math.max(-1, Math.min(1, smoothedVisualGamma / 45));
-        horizontalOffset = gammaNormalized * maxMovement;
+        if (visualGammaHistory.current.length > 0) {
+          const gammaNormalized = Math.max(-1, Math.min(1, smoothedVisualGamma / 45));
+          horizontalOffset = gammaNormalized * maxMovement;
+        }
       }
       
-      setVisualPosition({ x: horizontalOffset, y: 50 + verticalOffset });
+      // Always position key below keyhole when not armed, ensuring it's always visible
+      const baseVerticalOffset = isArmedRef.current ? 0 : 50; // 50px below center when not armed
+      setVisualPosition({ x: horizontalOffset, y: baseVerticalOffset + verticalOffset });
       lastVisualUpdate.current = now;
     }
     
