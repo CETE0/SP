@@ -54,6 +54,9 @@ if not SERVER_URL:
     print("Environment variable SERVER_URL is required, e.g. https://sp-production-b59c.up.railway.app")
     sys.exit(1)
 
+# Set to True if an RGB LED is connected and you want Morse blinking.
+ENABLE_LED = False  # <<<<<<<<<<  change to True to re-enable LED support
+
 # RGB LED pins (BCM numbering)
 LED_PINS: Dict[str, int] = {
     "red": 22,
@@ -216,9 +219,10 @@ class MorseBlinker(threading.Thread):
 
 def main():
     display = EPaperDisplay()
-    led = RGBLed(LED_PINS)
-    blinker = MorseBlinker(led)
-    blinker.start()
+    led = RGBLed(LED_PINS) if ENABLE_LED else None
+    blinker = MorseBlinker(led) if ENABLE_LED else None
+    if ENABLE_LED:
+        blinker.start()
 
     sio = socketio.Client()  # defaults to websocket + polling transports
 
@@ -239,7 +243,8 @@ def main():
             return
         print(f"[Socket] Global counter updated: {count_int}")
         display.display_number(count_int)
-        blinker.update_number(count_int)
+        if ENABLE_LED:
+            blinker.update_number(count_int)
 
     try:
         sio.connect(SERVER_URL, transports=["websocket"])
@@ -247,8 +252,10 @@ def main():
     except KeyboardInterrupt:
         print("Interrupted by user, shutting down…")
     finally:
-        blinker.stop()
-        led.cleanup()
+        if ENABLE_LED and blinker:
+            blinker.stop()
+        if ENABLE_LED and led:
+            led.cleanup()
         display.clear()
 
 
