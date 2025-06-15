@@ -95,7 +95,12 @@ class EPaperDisplay:
 
     def __init__(self):
         self.epd = epd2in13_V2.EPD()
-        self.epd.init()
+        # Use FULL_UPDATE mode during initialisation (required by newer API)
+        try:
+            self.epd.init(self.epd.FULL_UPDATE)
+        except TypeError:
+            # Fallback for older driver signature with no parameters
+            self.epd.init()
         self.width, self.height = self.epd.height, self.epd.width  # note orientation swap
         self.font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
 
