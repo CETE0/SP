@@ -4,7 +4,10 @@ import { useSocket } from '@/hooks/useSocket';
 
 const RATE_LIMIT_MS = 3000;
 const SMOOTHING_WINDOW = 5;
-const HORIZONTAL_THRESHOLD = 5; // Phone is ARMED when beta is within ±5 degrees of 0 (horizontal)
+const HORIZONTAL_ARMED = 5;  // degrees
+const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
+const SAMPLE_COUNT_BASELINE = 10;
+const SHOW_DEBUG = process.env.NODE_ENV !== 'production';
 
 function smoothBeta(values: number[], windowSize: number = SMOOTHING_WINDOW): number {
   if (values.length === 0) return 0;
@@ -42,7 +45,7 @@ function getOrientationColors(currentBeta: number, baseBeta: number) {
   const currentTiltProgress = Math.abs(baseBeta - currentBeta); // How much tilted
   const progress = Math.min(currentTiltProgress / totalTiltNeeded, 1); // 0 to 1
 
-  if (Math.abs(currentBeta) <= HORIZONTAL_THRESHOLD) {
+  if (Math.abs(currentBeta) <= HORIZONTAL_ARMED) {
     // ARMED state - vibrant success green
     return {
       background: '#001a00',
@@ -134,8 +137,8 @@ export const VerticalDetector = () => {
   const [isClient, setIsClient] = useState(false);
   const morseAudio = useRef<HTMLAudioElement | null>(null);
 
+  const [motionGranted, setMotionGranted] = useState(false);
 
-  
   useEffect(() => {
     // Set client-side flag and detect iOS
     setIsClient(true);
@@ -174,13 +177,15 @@ export const VerticalDetector = () => {
       isArmed,
       baseBeta: baseBeta?.toFixed(2),
       distanceFromHorizontal: Math.abs(deltaBeta).toFixed(2),
-      betaWithinThreshold: Math.abs(deltaBeta) <= HORIZONTAL_THRESHOLD,
-      gammaWithinThreshold: Math.abs(gamma) <= HORIZONTAL_THRESHOLD,
-      isCurrentlyHorizontal: Math.abs(deltaBeta) <= HORIZONTAL_THRESHOLD && Math.abs(gamma) <= HORIZONTAL_THRESHOLD
+      betaWithinThreshold: Math.abs(deltaBeta) <= HORIZONTAL_ARMED,
+      gammaWithinThreshold: Math.abs(gamma) <= HORIZONTAL_ARMED,
+      isCurrentlyHorizontal: Math.abs(deltaBeta) <= HORIZONTAL_ARMED && Math.abs(gamma) <= HORIZONTAL_ARMED
     }, null, 2));
     
     // ARMED state: phone is horizontal relative to baseline
-    const isCurrentlyHorizontal = Math.abs(deltaBeta) <= HORIZONTAL_THRESHOLD && Math.abs(gamma) <= HORIZONTAL_THRESHOLD;
+    const isCurrentlyHorizontal = isArmedRef.current
+      ? isHorizontal(HORIZONTAL_UNARMED, deltaBeta, gamma)
+      : isHorizontal(HORIZONTAL_ARMED, deltaBeta, gamma);
     
     if (isCurrentlyHorizontal && !isArmedRef.current && now - lastTrigger.current > RATE_LIMIT_MS) {
       // Transitioning from UNARMED to ARMED (horizontal)
@@ -223,58 +228,79 @@ export const VerticalDetector = () => {
 
   // Removed handleMotion since we only need orientation data
 
-  useEffect(() => {
-    if (!isClient) return; // Only run on client side
-    
-    if (
-      typeof DeviceOrientationEvent !== 'undefined' &&
-      typeof (DeviceOrientationEvent as any).requestPermission === 'function'
-    ) {
-      setNeedsPermission(true);
-    } else {
-      window.addEventListener('deviceorientation', handleOrientation);
-      setPermissionRequested(true);
-      // Set baseline beta after a short delay to let the sensor stabilize
-      setTimeout(() => {
-        if (betaHistory.current.length > 0) {
-          const currentBeta = betaHistory.current[betaHistory.current.length - 1];
-          setBaseBeta(currentBeta);
-        }
-      }, 200);
-      return () => {
-        window.removeEventListener('deviceorientation', handleOrientation);
-      };
-    }
-  }, [handleOrientation, isClient]);
-
-  const requestPermission = async () => {
-    setPermissionRequested(true);
+  const requestMotionPermission = async () => {
     try {
-      const orientationPermission = await (DeviceOrientationEvent as any).requestPermission();
-      const motionPermission = await (DeviceMotionEvent as any).requestPermission();
-      
-      if (orientationPermission === 'granted') {
-        window.addEventListener('deviceorientation', handleOrientation);
-        // Set baseline beta after a short delay to let the sensor stabilize
-        setTimeout(() => {
-          if (betaHistory.current.length > 0) {
-            const currentBeta = betaHistory.current[betaHistory.current.length - 1];
-            setBaseBeta(currentBeta);
-          }
-        }, 200);
+      if (
+        typeof DeviceOrientationEvent !== 'undefined' &&
+        // @ts-ignore – iOS non-standard
+        typeof DeviceOrientationEvent.requestPermission === 'function'
+      ) {
+        // iOS
+        // @ts-ignore
+        const res = await DeviceOrientationEvent.requestPermission();
+        if (res !== 'granted') throw new Error('denied');
       }
-      // Motion permission not needed for this simplified version
-      
-      if (orientationPermission === 'granted' || motionPermission === 'granted') {
-        setNeedsPermission(false);
-      }
-    } catch (e) {
+      setMotionGranted(true);
       setNeedsPermission(false);
-      setDebug('Permission error: ' + (e instanceof Error ? e.message : String(e)));
+    } catch {
+      alert('Motion permission denied. Tilt interaction disabled.');
     }
   };
 
-  // Removed currentFeedback since we simplified the system
+  // Show permission overlay only until granted
+  useEffect(() => {
+    if (
+      typeof DeviceOrientationEvent !== 'undefined' &&
+      // @ts-ignore
+      typeof DeviceOrientationEvent.requestPermission === 'function'
+    ) {
+      setNeedsPermission(!motionGranted);
+    } else {
+      // Android/ desktop – permission happens implicitly via user gesture
+      setMotionGranted(true);
+    }
+  }, [motionGranted]);
+
+  // ------------ visibility handling --------------
+  const attachOrientation = useCallback(() => {
+    window.addEventListener('deviceorientation', handleOrientation as any, {
+      passive: true,
+    });
+  }, [handleOrientation]);
+
+  const detachOrientation = useCallback(() => {
+    window.removeEventListener('deviceorientation', handleOrientation as any);
+  }, [handleOrientation]);
+
+  useEffect(() => {
+    if (!motionGranted) return;
+    attachOrientation();
+    const vis = () => {
+      if (document.visibilityState === 'visible') {
+        betaHistory.current = [];
+        setBaseBeta(null);
+        attachOrientation();
+      } else {
+        detachOrientation();
+      }
+    };
+    document.addEventListener('visibilitychange', vis);
+    return () => {
+      detachOrientation();
+      document.removeEventListener('visibilitychange', vis);
+    };
+  }, [motionGranted, attachOrientation, detachOrientation]);
+
+  // ---------- baseline capture after samples -------------
+  useEffect(() => {
+    if (baseBeta === null && betaHistory.current.length >= SAMPLE_COUNT_BASELINE) {
+      setBaseBeta(smoothBeta(betaHistory.current));
+    }
+  });
+
+  // --------------- helper isHorizontal ----------------
+  const isHorizontal = (threshold:number, deltaB:number, gamma:number) =>
+    Math.abs(deltaB) <= threshold && Math.abs(gamma) <= threshold;
 
   // Calculate enhanced colors based on current orientation
   const colors = (() => {
@@ -474,7 +500,7 @@ export const VerticalDetector = () => {
               let horizontalOffset = 0;
               let verticalOffset = 0;
               
-              if (Math.abs(currentBeta) <= HORIZONTAL_THRESHOLD && Math.abs(currentGamma) <= HORIZONTAL_THRESHOLD) {
+              if (Math.abs(currentBeta) <= HORIZONTAL_ARMED && Math.abs(currentGamma) <= HORIZONTAL_ARMED) {
                 // ARMED state - circle moves to center (overlapping with center circle)
                 horizontalOffset = 0;
                 verticalOffset = 0;
@@ -576,7 +602,7 @@ export const VerticalDetector = () => {
           position: 'fixed', inset: 0, background: 'black', zIndex: 10000, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'auto'
         }}>
           <button
-            onClick={requestPermission}
+            onClick={requestMotionPermission}
             style={{ 
               pointerEvents: 'auto',
               width: '200px',
@@ -609,8 +635,6 @@ export const VerticalDetector = () => {
           </button>
         </div>
       )}
-
-
 
       {/* Audio elements - only render on client */}
       {isClient && (
