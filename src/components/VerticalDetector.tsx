@@ -7,7 +7,7 @@ const SMOOTHING_WINDOW = 5;
 const HORIZONTAL_ARMED = 5;  // degrees
 const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
-const SHOW_DEBUG = process.env.NODE_ENV !== 'production';
+const SHOW_DEBUG = false;
 
 function smoothBeta(values: number[], windowSize: number = SMOOTHING_WINDOW): number {
   if (values.length === 0) return 0;
@@ -128,6 +128,7 @@ export const VerticalDetector = () => {
     }
   }, [isConnected]);
   const betaHistory = useRef<number[]>([]);
+  const gammaHistory = useRef<number[]>([]);
   const lastTrigger = useRef(0);
   const currentOrientation = useRef({ alpha: 0, beta: 0, gamma: 0 });
   const isArmedRef = useRef(false);
@@ -160,32 +161,39 @@ export const VerticalDetector = () => {
     
     currentOrientation.current = { alpha, beta, gamma };
     betaHistory.current.push(beta);
+    gammaHistory.current.push(gamma);
     if (betaHistory.current.length > SMOOTHING_WINDOW * 2) {
       betaHistory.current.shift();
     }
+    if (gammaHistory.current.length > SMOOTHING_WINDOW * 2) {
+      gammaHistory.current.shift();
+    }
     
     const smoothedBeta = smoothBeta(betaHistory.current);
-    const now = Date.now();
+    const smoothedGamma = smoothBeta(gammaHistory.current);
     
+    const now = Date.now();
     const deltaBeta = baseBeta !== null ? smoothedBeta - baseBeta : smoothedBeta;
 
-    setDebug(JSON.stringify({
-      beta: beta.toFixed(2),
-      gamma: gamma.toFixed(2),
-      smoothedBeta: smoothedBeta.toFixed(2),
-      deltaBeta: deltaBeta.toFixed(2),
-      isArmed,
-      baseBeta: baseBeta?.toFixed(2),
-      distanceFromHorizontal: Math.abs(deltaBeta).toFixed(2),
-      betaWithinThreshold: Math.abs(deltaBeta) <= HORIZONTAL_ARMED,
-      gammaWithinThreshold: Math.abs(gamma) <= HORIZONTAL_ARMED,
-      isCurrentlyHorizontal: Math.abs(deltaBeta) <= HORIZONTAL_ARMED && Math.abs(gamma) <= HORIZONTAL_ARMED
-    }, null, 2));
+    if (SHOW_DEBUG) {
+      setDebug(JSON.stringify({
+        beta: beta.toFixed(2),
+        gamma: gamma.toFixed(2),
+        smoothedBeta: smoothedBeta.toFixed(2),
+        deltaBeta: deltaBeta.toFixed(2),
+        isArmed,
+        baseBeta: baseBeta?.toFixed(2),
+        distanceFromHorizontal: Math.abs(deltaBeta).toFixed(2),
+        betaWithinThreshold: Math.abs(deltaBeta) <= HORIZONTAL_ARMED,
+        gammaWithinThreshold: Math.abs(gamma) <= HORIZONTAL_ARMED,
+        isCurrentlyHorizontal: Math.abs(deltaBeta) <= HORIZONTAL_ARMED && Math.abs(gamma) <= HORIZONTAL_ARMED
+      }, null, 2));
+    }
     
     // ARMED state: phone is horizontal relative to baseline
     const isCurrentlyHorizontal = isArmedRef.current
-      ? isHorizontal(HORIZONTAL_UNARMED, deltaBeta, gamma)
-      : isHorizontal(HORIZONTAL_ARMED, deltaBeta, gamma);
+      ? isHorizontal(HORIZONTAL_UNARMED, deltaBeta, smoothedGamma)
+      : isHorizontal(HORIZONTAL_ARMED, deltaBeta, smoothedGamma);
     
     if (isCurrentlyHorizontal && !isArmedRef.current && now - lastTrigger.current > RATE_LIMIT_MS) {
       // Transitioning from UNARMED to ARMED (horizontal)
@@ -404,13 +412,10 @@ export const VerticalDetector = () => {
         <div className="relative w-40 h-40">
           {/* Traditional keyhole shape */}
           <div 
-            className={`absolute top-1/2 left-1/2 -translate-x-1/2 transition-all duration-300 z-10 ${
+            className={`absolute inset-0 flex items-center justify-center transition-all duration-300 z-10 ${
               !isArmed ? 'animate-pulse' : ''
             }`}
-            style={{
-              transform: 'translate(-50%, calc(-50% + 15px))', // Center the keyhole
-              animationDuration: !isArmed ? '1s' : undefined,
-            }}
+            style={{ animationDuration: !isArmed ? '1s' : undefined }}
           >
             {/* Solid circular part - the crescent shape */}
             <div 
@@ -490,8 +495,8 @@ export const VerticalDetector = () => {
           {/* Moving circle based on all gyro parameters */}
           {isClient && betaHistory.current.length > 0 && baseBeta !== null && (
             (() => {
-              const currentBeta = betaHistory.current[betaHistory.current.length - 1];
-              const currentGamma = currentOrientation.current.gamma;
+              const currentBeta = smoothBeta(betaHistory.current);
+              const currentGamma = smoothBeta(gammaHistory.current);
               
               // Calculate movement based on all gyro parameters
               const maxMovement = 60; // Maximum pixels the circle can move from center
@@ -500,7 +505,7 @@ export const VerticalDetector = () => {
               let horizontalOffset = 0;
               let verticalOffset = 0;
               
-              if (Math.abs(currentBeta) <= HORIZONTAL_ARMED && Math.abs(currentGamma) <= HORIZONTAL_ARMED) {
+              if (Math.abs(currentBeta - (baseBeta ?? 0)) <= HORIZONTAL_ARMED && Math.abs(currentGamma) <= HORIZONTAL_ARMED) {
                 // ARMED state - circle moves to center (overlapping with center circle)
                 horizontalOffset = 0;
                 verticalOffset = 0;
@@ -539,7 +544,7 @@ export const VerticalDetector = () => {
       </div>
 
       {/* Debug overlay */}
-      {debug && (
+      {SHOW_DEBUG && debug && (
         <div style={{
           position: 'absolute', top: 0, left: 0, color: 'lime', background: 'rgba(0,0,0,0.7)', zIndex: 9999, fontSize: 12, padding: 8, maxWidth: 400, whiteSpace: 'pre-wrap', wordBreak: 'break-all', pointerEvents: 'none'
         }}>{debug}</div>
@@ -560,7 +565,7 @@ export const VerticalDetector = () => {
       </div>
 
       {/* Debug logs display */}
-      {debugLogs.length > 0 && (
+      {SHOW_DEBUG && debugLogs.length > 0 && (
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0, color: 'yellow', background: 'rgba(0,0,0,0.8)', zIndex: 9999, fontSize: 12, padding: 8, maxHeight: '200px', overflow: 'auto', pointerEvents: 'none'
         }}>
