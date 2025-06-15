@@ -92,8 +92,8 @@ export const VerticalDetector = () => {
   const [isArmedPulsing, setIsArmedPulsing] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
-  // Add visual position state for smoother movement - start below keyhole
-  const [visualPosition, setVisualPosition] = useState({ x: 0, y: 50 });
+  // Add visual position state for smoother movement - start aligned with keyhole slot
+  const [visualPosition, setVisualPosition] = useState({ x: 0, y: 76 });
   const lastVisualUpdate = useRef(0);
   const visualBetaHistory = useRef<number[]>([]);
   const visualGammaHistory = useRef<number[]>([]);
@@ -194,7 +194,7 @@ export const VerticalDetector = () => {
     const smoothedBeta = smoothBeta(betaHistory.current);
     const now = Date.now();
     
-    const deltaBeta = baseBeta !== null ? smoothedBeta - baseBeta : smoothedBeta;
+    const deltaBeta = baseBeta !== null ? smoothedBeta - baseBeta : 0;
 
     // Only update debug in development and throttle it
     if (SHOW_DEBUG) {
@@ -212,41 +212,43 @@ export const VerticalDetector = () => {
       }, null, 2));
     }
     
-    // Throttled visual position updates for smoother movement
+    // ALWAYS update visual position for smooth movement
     if (now - lastVisualUpdate.current > UPDATE_THROTTLE_MS) {
       const smoothedVisualBeta = smoothMovement(visualBetaHistory.current);
       const smoothedVisualGamma = smoothMovement(visualGammaHistory.current);
       
-      const maxMovement = 60;
       let horizontalOffset = 0;
       let verticalOffset = 0;
       
-      // Use actual ARMED state instead of sensor thresholds to prevent premature sticking
-      if (isArmedRef.current) {
-        // ARMED state - move up into the keyhole slot
-        horizontalOffset = 0;
-        verticalOffset = -15; // Move up into the keyhole slot
-      } else {
-        // UNARMED state - calculate position based on tilt, but always keep key visible
-        if (baseBeta !== null && visualBetaHistory.current.length > 0) {
-          // Use relative positioning from baseline
-          const relativeBeta = smoothedVisualBeta - baseBeta;
-          const betaNormalized = Math.max(-1, Math.min(1, relativeBeta / 45));
-          verticalOffset = betaNormalized * maxMovement;
-        } else {
-          // Default position when no baseline yet - stay at default position
-          verticalOffset = 0;
-        }
+      if (baseBeta !== null) {
+        // Use relative positioning based on baseline
+        const visualDeltaBeta = smoothedVisualBeta - baseBeta;
         
-        if (visualGammaHistory.current.length > 0) {
-          const gammaNormalized = Math.max(-1, Math.min(1, smoothedVisualGamma / 45));
-          horizontalOffset = gammaNormalized * maxMovement;
+        // Progressive movement based on how close to horizontal
+        const progressToHorizontal = Math.max(0, Math.min(1, 
+          (Math.abs(baseBeta) - Math.abs(visualDeltaBeta)) / Math.abs(baseBeta)
+        ));
+        
+                 // Smooth transition: start at bottom (aligned with keyhole slot), move up as approaching horizontal
+         const maxUpwardMovement = 91; // Distance from bottom to keyhole slot (76px to -15px)
+         verticalOffset = 76 - (progressToHorizontal * maxUpwardMovement); // Start at 76px below, move up
+        
+        // Horizontal movement based on gamma (left/right tilt)
+        const gammaNormalized = Math.max(-1, Math.min(1, smoothedVisualGamma / 45));
+        horizontalOffset = gammaNormalized * 30; // Reduced horizontal movement
+        
+        // When very close to horizontal, snap to center for clean insertion
+        if (Math.abs(visualDeltaBeta) <= HORIZONTAL_ARMED && Math.abs(smoothedVisualGamma) <= HORIZONTAL_ARMED) {
+          horizontalOffset = 0;
+          verticalOffset = -15; // Final position inside keyhole
         }
-      }
+             } else {
+         // Before baseline is established, show key at bottom aligned with keyhole
+         verticalOffset = 76; // Bottom position, aligned with keyhole slot (15px keyhole offset + 46px slot top + 15px spacing)
+         horizontalOffset = 0;
+       }
       
-      // Always position key below keyhole when not armed, ensuring it's always visible
-      const baseVerticalOffset = isArmedRef.current ? 0 : 50; // 50px below center when not armed
-      setVisualPosition({ x: horizontalOffset, y: baseVerticalOffset + verticalOffset });
+      setVisualPosition({ x: horizontalOffset, y: verticalOffset });
       lastVisualUpdate.current = now;
     }
     
@@ -542,7 +544,7 @@ export const VerticalDetector = () => {
             </div>
           </div>
           
-          {/* Moving key with SMOOTH MOVEMENT - Always visible */}
+          {/* Moving key with SMOOTH MOVEMENT - ALWAYS VISIBLE */}
           {isClient && (
             <div 
               className="absolute transition-all duration-200 ease-out"
@@ -557,6 +559,7 @@ export const VerticalDetector = () => {
                 border: `2px solid ${isArmed ? '#00ff64' : colors.primary}`,
                 boxShadow: isArmed ? `0 0 15px #00ff64` : `0 0 12px ${colors.primary}`,
                 zIndex: isArmed ? 15 : 5,
+                opacity: baseBeta !== null ? 1 : 0.7, // Slightly transparent before baseline
               }}
             />
           )}
