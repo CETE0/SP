@@ -120,30 +120,49 @@ class EPaperDisplay:
         draw.line((x, y, x, y + h), fill=0, width=2)
         return x + s_gap
 
-    def display_tally(self, n:int):
-        H_STROKE = 45
-        S_GAP    = 6    # stroke gap
-        G_GAP    = 10   # gap after a 5-tally group
+    def display_tally(self, number: int):
+        """Render tally marks representing `number`, rotated 90° for portrait."""
+        print(f"[EPD] Displaying tally for: {number}")
 
-        img = Image.new("1", (self.width, self.height), 255)
-        draw = ImageDraw.Draw(img)
+        H_STROKE = 40  # height of each stroke before rotation
+        S_GAP = 6      # gap between strokes within a group
+        G_GAP = 10     # additional gap after a full group of 5
+        ROW_GAP = 8    # vertical gap between rows
+
+        # Start with an image in landscape (will rotate later)
+        img_land = Image.new("1", (self.height, self.width), 255)  # width/height swapped
+        draw = ImageDraw.Draw(img_land)
 
         x, y = 0, 0
-        while n > 0 and y + H_STROKE < self.height:
-            # Decide whether to draw full group or remainder
-            if n >= 5:
-                next_x = self._draw_tally_group(draw, x, y, H_STROKE, G_GAP, S_GAP)
-                n -= 5
-            else:
-                next_x = self._draw_single_stroke(draw, x, y, H_STROKE, S_GAP)
-                n -= 1
-            # wrap to next row if needed
-            if next_x + 4 * S_GAP > self.width:
-                x, y = 0, y + H_STROKE + 6  # row gap
-            else:
-                x = next_x
+        remaining = number
 
-        self.epd.display(self.epd.getbuffer(img))
+        while remaining > 0 and y + H_STROKE < img_land.height:
+            # Decide group type
+            if remaining >= 5:
+                # Draw 5-stroke tally group
+                # 4 vertical strokes
+                for i in range(4):
+                    x_i = x + i * S_GAP
+                    draw.line((x_i, y, x_i, y + H_STROKE), fill=0, width=2)
+                # diagonal across them
+                draw.line((x, y, x + 3 * S_GAP, y + H_STROKE), fill=0, width=2)
+                x += 4 * S_GAP + G_GAP
+                remaining -= 5
+            else:
+                # Draw single vertical stroke(s)
+                for _ in range(remaining):
+                    draw.line((x, y, x, y + H_STROKE), fill=0, width=2)
+                    x += S_GAP
+                remaining = 0
+
+            # Wrap to new row if hitting right edge
+            if x + 4 * S_GAP > img_land.width:
+                x = 0
+                y += H_STROKE + ROW_GAP
+
+        # Rotate 90° to make strokes vertical relative to display orientation
+        img_rot = img_land.rotate(90, expand=True)
+        self.epd.display(self.epd.getbuffer(img_rot))
 
     def clear(self):
         self.epd.Clear(0xFF)
