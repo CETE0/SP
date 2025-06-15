@@ -3,13 +3,13 @@ import { motion } from 'framer-motion';
 import { useSocket } from '@/hooks/useSocket';
 
 const RATE_LIMIT_MS = 3000;
-const SMOOTHING_WINDOW = 10;
+const SMOOTHING_WINDOW = 8;
 const HORIZONTAL_ARMED = 5;  // degrees
 const HORIZONTAL_UNARMED = 8; // degrees – hysteresis
 const SAMPLE_COUNT_BASELINE = 10;
 const SHOW_DEBUG = false;
-const UPDATE_THROTTLE_MS = 100;
-const KEY_BOTTOM_Y = 70; // px offset when phone is vertical
+const UPDATE_THROTTLE_MS = 50;
+const KEY_BOTTOM_Y = 60; // px offset when phone is vertical
 const KEY_TOP_Y = 32;   // px offset when phone is fully horizontal (inside slot)
 
 function smoothBeta(values: number[], windowSize: number = SMOOTHING_WINDOW): number {
@@ -94,8 +94,8 @@ export const VerticalDetector = () => {
   const [isArmedPulsing, setIsArmedPulsing] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
-  // Add visual position state for smoother movement
-  const [visualPosition, setVisualPosition] = useState({ x: 0, y: 50 });
+  // Add visual position state for smoother movement – start at the bottom offset
+  const [visualPosition, setVisualPosition] = useState({ x: 0, y: KEY_BOTTOM_Y });
   const lastVisualUpdate = useRef(0);
   const visualBetaHistory = useRef<number[]>([]);
   const visualGammaHistory = useRef<number[]>([]);
@@ -527,14 +527,15 @@ export const VerticalDetector = () => {
             </div>
           </div>
           
-          {/* Moving key with SMOOTH MOVEMENT */}
-          {isClient && baseBeta !== null && (
-            <div 
-              className="absolute transition-all duration-200 ease-out"
+          {/* Moving key – always rendered & animated with Framer Motion for smoothness */}
+          {isClient && (
+            <motion.div
+              className="absolute"
               style={{
                 top: '50%',
                 left: '50%',
-                transform: `translate(calc(-50% + ${visualPosition.x}px), calc(-50% + ${visualPosition.y}px)) rotate(180deg)`,
+                // keep the element centred, rotation comes first so spring only affects position
+                transform: 'translate(-50%, -50%) rotate(180deg)',
                 width: '14px',
                 height: '26px',
                 borderRadius: '7px 7px 3px 3px',
@@ -543,6 +544,8 @@ export const VerticalDetector = () => {
                 boxShadow: isArmed ? `0 0 15px #00ff64` : `0 0 12px ${colors.primary}`,
                 zIndex: isArmed ? 15 : 5,
               }}
+              animate={{ x: visualPosition.x, y: visualPosition.y }}
+              transition={{ type: 'spring', stiffness: 160, damping: 22 }}
             />
           )}
         </div>
