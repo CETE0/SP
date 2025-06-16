@@ -76,6 +76,10 @@ GAP_WORD = 7 * UNIT
 # Fonts for e-paper (change path if custom font installed)
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 FONT_SIZE = 48
+
+# QR code path (must be 118x118 mono PNG placed in raspberry/)
+QR_PATH = os.path.join(os.path.dirname(__file__), "qrcode_118x118.png")
+
 # ------------------------------------------------------------------------- #
 
 # Morse code map for digits 0-9
@@ -166,6 +170,42 @@ class EPaperDisplay:
 
     def clear(self):
         self.epd.Clear(0xFF)
+
+    # ------------------ New Counter + QR Layout ------------------ #
+    def display_counter_and_qr(self, number: int):
+        """Show numeric counter on top half and QR code on bottom half."""
+        H = self.epd.height  # 250
+        W = self.epd.width   # 122
+        img = Image.new("1", (W, H), 255)
+        draw = ImageDraw.Draw(img)
+
+        # --- Top half: numeric counter ---
+        top_h = H // 2
+        text = str(number)
+        font = self.font
+        tw, th = draw.textsize(text, font=font)
+        text_x = (W - tw) // 2
+        text_y = (top_h - th) // 2
+        draw.text((text_x, text_y), text, font=font, fill=0)
+
+        # --- Bottom half: QR code ---
+        try:
+            qr = Image.open(QR_PATH).convert("1")
+        except FileNotFoundError:
+            print(f"[EPD] QR image not found at {QR_PATH}")
+            qr = None
+        if qr:
+            qr_w, qr_h = qr.size
+            # Resize if larger than available space
+            max_qr_dim = min(W, H - top_h)
+            if qr_w > max_qr_dim or qr_h > max_qr_dim:
+                qr = qr.resize((max_qr_dim, max_qr_dim), Image.NEAREST)
+                qr_w, qr_h = qr.size
+            qr_x = (W - qr_w) // 2
+            qr_y = top_h + (H - top_h - qr_h) // 2
+            img.paste(qr, (qr_x, qr_y))
+
+        self.epd.display(self.epd.getbuffer(img))
 
 
 class RGBLed:
@@ -287,7 +327,7 @@ def main():
             print("[Socket] Received invalid counter value:", count)
             return
         print(f"[Socket] Global counter updated: {count_int}")
-        display.display_tally(count_int)
+        display.display_counter_and_qr(count_int)
         if ENABLE_LED:
             blinker.update_number(count_int)
 
