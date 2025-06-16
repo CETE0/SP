@@ -188,17 +188,16 @@ class EPaperDisplay:
         small_font = ImageFont.truetype(FONT_PATH, 14)
         big_font = ImageFont.truetype(FONT_PATH, 32)
 
-        # Line 1: "HAN SIDO"
-        l1 = "HAN SIDO"
-        l1_w, l1_h = draw.textsize(l1, font=small_font)
-        l1_x = (W - l1_w) // 2
-        y_cursor = 2  # small top margin
-        draw.text((l1_x, y_cursor), l1, font=small_font, fill=0)
-        y_cursor += l1_h + 2
+        # Prepare measurements for all three lines to center vertically
+        l1_text = "HAN SIDO"
+        l3_text = "LEVANTADAS"
 
-        # Line 2: icon + number
+        l1_w, l1_h = draw.textsize(l1_text, font=small_font)
+        l3_w, l3_h = draw.textsize(l3_text, font=small_font)
+
         num_text = str(number)
         num_w, num_h = draw.textsize(num_text, font=big_font)
+
         try:
             icon = Image.open(KEYHOLE_PATH).convert("1")
         except FileNotFoundError:
@@ -206,31 +205,35 @@ class EPaperDisplay:
         icon_w = icon.width if icon else 0
         icon_h = icon.height if icon else 0
         gap = 4 if icon else 0
-        row_w = icon_w + gap + num_w
+
+        row_w = num_w + gap + icon_w  # number first, then icon
+        row_h = max(num_h, icon_h)
+
+        # vertical spacing between lines
+        line_gap = 4
+
+        total_h = l1_h + line_gap + row_h + line_gap + l3_h
+        y_cursor = (top_h - total_h) // 2  # center vertically within top half
+
+        # Line 1
+        l1_x = (W - l1_w) // 2
+        draw.text((l1_x, y_cursor), l1_text, font=small_font, fill=0)
+        y_cursor += l1_h + line_gap
+
+        # Line 2 (number + icon)
         row_x = (W - row_w) // 2
-        row_y = y_cursor
-
-        # Paste icon
-        if icon:
-            icon_y = row_y + max(0, (num_h - icon_h) // 2)
-            img.paste(icon, (row_x, icon_y))
         # Draw number
-        num_x = row_x + icon_w + gap
-        draw.text((num_x, row_y), num_text, font=big_font, fill=0)
+        draw.text((row_x, y_cursor), num_text, font=big_font, fill=0)
+        # Paste icon to the right of number
+        if icon:
+            icon_x = row_x + num_w + gap
+            icon_y = y_cursor + max(0, (num_h - icon_h) // 2)
+            img.paste(icon, (icon_x, icon_y))
+        y_cursor += row_h + line_gap
 
-        y_cursor += max(num_h, icon_h) + 2
-
-        # Line 3: "LEVANTAMIENTOS"
-        l3 = "LEVANTAMIENTOS"
-        l3_w, l3_h = draw.textsize(l3, font=small_font)
+        # Line 3
         l3_x = (W - l3_w) // 2
-        # Ensure we don't exceed top_h; if so, shift all upwards slightly
-        if y_cursor + l3_h > top_h:
-            shift = (y_cursor + l3_h) - top_h + 2
-            img = img.crop((0, 0, W, H))  # ensure same size
-            draw = ImageDraw.Draw(img)
-            # re-draw? For simplicity ignore shift when overflow
-        draw.text((l3_x, y_cursor), l3, font=small_font, fill=0)
+        draw.text((l3_x, y_cursor), l3_text, font=small_font, fill=0)
 
         # --- Bottom half: QR code ---
         try:
