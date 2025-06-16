@@ -48,11 +48,6 @@ except ImportError:
 
 from PIL import Image, ImageDraw, ImageFont
 
-try:
-    import qrcode
-except ImportError:
-    qrcode = None  # we will warn later
-
 # ----------------------------- Configuration ----------------------------- #
 SERVER_URL = os.getenv("SERVER_URL")
 if not SERVER_URL:
@@ -111,9 +106,6 @@ class EPaperDisplay:
             self.epd.init()
         self.width, self.height = self.epd.height, self.epd.width  # note orientation swap
         self.font = ImageFont.truetype(FONT_PATH, FONT_SIZE)
-
-        # Pre-generate QR code for the webpage
-        self.qr_img = self._generate_qr("https://sistema-picaro.vercel.app")
 
     def _draw_tally_group(self, draw, x, y, h, w_gap, s_gap):
         # draw 4 vertical lines
@@ -174,58 +166,6 @@ class EPaperDisplay:
 
     def clear(self):
         self.epd.Clear(0xFF)
-
-    # ------------------ QR helper ------------------ #
-    def _generate_qr(self, url: str) -> Image.Image:
-        if qrcode is None:
-            print("[EPD] Warning: qrcode library missing; QR will be blank. Install with: sudo pip3 install qrcode[pil]")
-            return Image.new("1", (self.width, self.height // 2), 255)
-
-        qr = qrcode.QRCode(box_size=2, border=1, error_correction=qrcode.constants.ERROR_CORRECT_M)
-        qr.add_data(url)
-        qr.make(fit=True)
-        img_qr = qr.make_image(fill_color=0, back_color=255).convert("1")
-        # Resize to fit bottom half while preserving aspect ratio
-        max_w = self.height  # because we rotate later
-        max_h = self.width // 2
-        img_qr.thumbnail((max_w, max_h), Image.NEAREST)
-        return img_qr
-
-    # ------------------ Number + QR ------------------ #
-    def display_number_qr(self, number: int):
-        """Display number on top half and QR code on bottom half (portrait)."""
-        print(f"[EPD] Displaying number+QR: {number}")
-
-        img_land = Image.new("1", (self.height, self.width), 255)
-        draw = ImageDraw.Draw(img_land)
-
-        # Top half dimensions
-        top_h = img_land.height // 2
-
-        text = str(number)
-        font_size = 48
-        font = self.font
-        # Dynamically shrink font if number is too wide
-        while True:
-            w, h = draw.textsize(text, font=font)
-            if w <= img_land.width - 10 or font_size <= 12:
-                break
-            font_size -= 4
-            font = ImageFont.truetype(FONT_PATH, font_size)
-
-        text_x = (img_land.width - w) // 2
-        text_y = (top_h - h) // 2
-        draw.text((text_x, text_y), text, font=font, fill=0)
-
-        # Bottom half QR
-        qr_w, qr_h = self.qr_img.size
-        qr_x = (img_land.width - qr_w) // 2
-        qr_y = top_h + ((img_land.height - top_h) - qr_h) // 2
-        img_land.paste(self.qr_img, (qr_x, qr_y))
-
-        # Rotate for display orientation
-        img_rot = img_land.rotate(90, expand=True)
-        self.epd.display(self.epd.getbuffer(img_rot))
 
 
 class RGBLed:
@@ -347,7 +287,7 @@ def main():
             print("[Socket] Received invalid counter value:", count)
             return
         print(f"[Socket] Global counter updated: {count_int}")
-        display.display_number_qr(count_int)
+        display.display_tally(count_int)
         if ENABLE_LED:
             blinker.update_number(count_int)
 
