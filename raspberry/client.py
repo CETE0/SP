@@ -79,6 +79,8 @@ FONT_SIZE = 48
 
 # QR code path (must be 118x118 mono PNG placed in raspberry/)
 QR_PATH = os.path.join(os.path.dirname(__file__), "qrcode_118x118.png")
+# Keyhole icon (24x24) path
+KEYHOLE_PATH = os.path.join(os.path.dirname(__file__), "24.png")
 
 # ------------------------------------------------------------------------- #
 
@@ -179,14 +181,56 @@ class EPaperDisplay:
         img = Image.new("1", (W, H), 255)
         draw = ImageDraw.Draw(img)
 
-        # --- Top half: numeric counter ---
+        # --- Top half: labels + icon + counter ---
         top_h = H // 2
-        text = str(number)
-        font = self.font
-        tw, th = draw.textsize(text, font=font)
-        text_x = (W - tw) // 2
-        text_y = (top_h - th) // 2
-        draw.text((text_x, text_y), text, font=font, fill=0)
+
+        # Fonts
+        small_font = ImageFont.truetype(FONT_PATH, 14)
+        big_font = ImageFont.truetype(FONT_PATH, 32)
+
+        # Line 1: "HAN SIDO"
+        l1 = "HAN SIDO"
+        l1_w, l1_h = draw.textsize(l1, font=small_font)
+        l1_x = (W - l1_w) // 2
+        y_cursor = 2  # small top margin
+        draw.text((l1_x, y_cursor), l1, font=small_font, fill=0)
+        y_cursor += l1_h + 2
+
+        # Line 2: icon + number
+        num_text = str(number)
+        num_w, num_h = draw.textsize(num_text, font=big_font)
+        try:
+            icon = Image.open(KEYHOLE_PATH).convert("1")
+        except FileNotFoundError:
+            icon = None
+        icon_w = icon.width if icon else 0
+        icon_h = icon.height if icon else 0
+        gap = 4 if icon else 0
+        row_w = icon_w + gap + num_w
+        row_x = (W - row_w) // 2
+        row_y = y_cursor
+
+        # Paste icon
+        if icon:
+            icon_y = row_y + max(0, (num_h - icon_h) // 2)
+            img.paste(icon, (row_x, icon_y))
+        # Draw number
+        num_x = row_x + icon_w + gap
+        draw.text((num_x, row_y), num_text, font=big_font, fill=0)
+
+        y_cursor += max(num_h, icon_h) + 2
+
+        # Line 3: "LEVANTAMIENTOS"
+        l3 = "LEVANTAMIENTOS"
+        l3_w, l3_h = draw.textsize(l3, font=small_font)
+        l3_x = (W - l3_w) // 2
+        # Ensure we don't exceed top_h; if so, shift all upwards slightly
+        if y_cursor + l3_h > top_h:
+            shift = (y_cursor + l3_h) - top_h + 2
+            img = img.crop((0, 0, W, H))  # ensure same size
+            draw = ImageDraw.Draw(img)
+            # re-draw? For simplicity ignore shift when overflow
+        draw.text((l3_x, y_cursor), l3, font=small_font, fill=0)
 
         # --- Bottom half: QR code ---
         try:
