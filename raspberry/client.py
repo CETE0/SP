@@ -205,7 +205,9 @@ class EPaperDisplay:
             qr_y = top_h + (H - top_h - qr_h) // 2
             img.paste(qr, (qr_x, qr_y))
 
-        self.epd.display(self.epd.getbuffer(img))
+            # Rotate 180° so content appears upright when device is mounted inverted
+            img_rot = img.rotate(180, expand=True)
+            self.epd.display(self.epd.getbuffer(img_rot))
 
 
 class RGBLed:
